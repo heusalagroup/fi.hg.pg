@@ -1,3 +1,5 @@
+**Join our [Discord](https://discord.gg/UBTrHxA78f) to discuss about our software!**
+
 # @heusalagroup/fi.hg.pg
 
 Lightweight PostgreSQL library written in TypeScript.
