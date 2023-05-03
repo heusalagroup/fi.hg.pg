@@ -19,75 +19,79 @@ export class PgRepository <T extends StoredRepositoryItem> implements Repository
         setQuery : string,
         deleteQuery : string
     ) {
-
+        this._insertQuery = insertQuery;
+        this._listQuery = listQuery;
+        this._getQuery = getQuery;
+        this._setQuery = setQuery;
+        this._deleteQuery = deleteQuery;
     }
 
-    public createItem (data: T, members?: readonly string[]): Promise<RepositoryEntry<T>> {
-        return Promise.resolve(undefined);
+    public async createItem (data: T, members?: readonly string[]): Promise<RepositoryEntry<T>> {
+        throw new Error(`Not implemented`);
     }
 
-    public deleteAll (): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async deleteAll (): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public deleteById (id: string): Promise<RepositoryEntry<T>> {
-        return Promise.resolve(undefined);
+    public async deleteById (id: string): Promise<RepositoryEntry<T>> {
+        throw new Error(`Not implemented`);
     }
 
-    public deleteByIdList (list: readonly string[]): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async deleteByIdList (list: readonly string[]): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public deleteByList (list: RepositoryEntry<T>[]): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async deleteByList (list: RepositoryEntry<T>[]): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public findById (id: string, includeMembers?: boolean): Promise<RepositoryEntry<T> | undefined> {
-        return Promise.resolve(undefined);
+    public async findById (id: string, includeMembers?: boolean): Promise<RepositoryEntry<T> | undefined> {
+        throw new Error(`Not implemented`);
     }
 
-    public findByIdAndUpdate (id: string, item: T): Promise<RepositoryEntry<T>> {
-        return Promise.resolve(undefined);
+    public async findByIdAndUpdate (id: string, item: T): Promise<RepositoryEntry<T>> {
+        throw new Error(`Not implemented`);
     }
 
-    public findByProperty (propertyName: string, propertyValue: any): Promise<RepositoryEntry<T> | undefined> {
-        return Promise.resolve(undefined);
+    public async findByProperty (propertyName: string, propertyValue: any): Promise<RepositoryEntry<T> | undefined> {
+        throw new Error(`Not implemented`);
     }
 
-    public getAll (): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async getAll (): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public getAllByProperty (propertyName: string, propertyValue: any): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async getAllByProperty (propertyName: string, propertyValue: any): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public getSome (idList: readonly string[]): Promise<RepositoryEntry<T>[]> {
-        return Promise.resolve([]);
+    public async getSome (idList: readonly string[]): Promise<RepositoryEntry<T>[]> {
+        throw new Error(`Not implemented`);
     }
 
-    public inviteToItem (id: string, members: readonly string[]): Promise<void> {
-        return Promise.resolve(undefined);
+    public async inviteToItem (id: string, members: readonly string[]): Promise<void> {
+        throw new Error(`Not implemented`);
     }
 
     public isRepositoryEntryList (list: any): list is RepositoryEntry<T>[] {
-        return undefined;
+        throw new Error(`Not implemented`);
     }
 
-    public subscribeToItem (id: string): Promise<void> {
-        return Promise.resolve(undefined);
+    public async subscribeToItem (id: string): Promise<void> {
+        throw new Error(`Not implemented`);
     }
 
-    public update (id: string, data: T): Promise<RepositoryEntry<T>> {
-        return Promise.resolve(undefined);
+    public async update (id: string, data: T): Promise<RepositoryEntry<T>> {
+        throw new Error(`Not implemented`);
     }
 
-    public updateOrCreateItem (item: T): Promise<RepositoryEntry<T>> {
-        return Promise.resolve(undefined);
+    public async updateOrCreateItem (item: T): Promise<RepositoryEntry<T>> {
+        throw new Error(`Not implemented`);
     }
 
-    public waitById (id: string, includeMembers?: boolean, timeout?: number): Promise<RepositoryEntry<T> | undefined> {
-        return Promise.resolve(undefined);
+    public async waitById (id: string, includeMembers?: boolean, timeout?: number): Promise<RepositoryEntry<T> | undefined> {
+        throw new Error(`Not implemented`);
     }
 
 }
