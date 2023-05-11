@@ -1,0 +1,24 @@
+version: '3.1'
+
+services:
+
+  fi-hg-pg-server:
+    restart: "unless-stopped"
+    container_name: fi-hg-pg-server
+    image: "fi-hg-pg-server:latest"
+    cap_add:
+    - SYS_NICE  # CAP_SYS_NICE
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POSTGRES_IMAGE: 'postgres:15'
+    ports:
+    - "5432:5432"
+    environment:
+      POSTGRES_ROOT_PASSWORD: "fcRmzTX7ra9cIwGBfWn914GNjS7FmMpt"
+      POSTGRES_DB: "hg"
+      POSTGRES_USER: "hg"
+      POSTGRES_PASSWORD: "rxPe4XHbonLeHwjvKdq9R9aDWf1xiUje"
+    volumes:
+    - "./volumes/postgres-data:/var/lib/postgres"

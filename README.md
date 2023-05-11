@@ -4,6 +4,12 @@
 
 Lightweight PostgreSQL library written in TypeScript.
 
+To use this persister, install following runtime dependencies:
+
+```
+npm install --save pg @types/pg
+```
+
 See also [hgrs](https://github.com/heusalagroup/hgrs).
 
 ### It doesn't have many runtime dependencies
