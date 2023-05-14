@@ -15,7 +15,6 @@ import { LogLevel } from "../core/types/LogLevel";
 import { isSafeInteger } from "../core/types/Number";
 import { PersisterMetadataManager } from "../core/data/persisters/types/PersisterMetadataManager";
 import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/PersisterMetadataManagerImpl";
-import { EntityFieldType } from "../core/data/types/EntityFieldType";
 import { PgEntitySelectQueryBuilder } from "../core/data/persisters/pg/query/select/PgEntitySelectQueryBuilder";
 import { PgQueryUtils } from "../core/data/persisters/pg/utils/PgQueryUtils";
 import { PgOid } from "../core/data/persisters/pg/types/PgOid";
@@ -24,14 +23,24 @@ import { Sort } from "../core/data/Sort";
 import { Where } from "../core/data/Where";
 import { find } from "../core/functions/find";
 import { PgEntityDeleteQueryBuilder } from "../core/data/persisters/pg/query/delete/PgEntityDeleteQueryBuilder";
-import { MySqlEntityInsertQueryBuilder } from "../core/data/persisters/mysql/query/insert/MySqlEntityInsertQueryBuilder";
 import { isArray } from "../core/types/Array";
+import { has } from "../core/functions/has";
+import { PgEntityUpdateQueryBuilder } from "../core/data/persisters/pg/query/update/PgEntityUpdateQueryBuilder";
+import { PgAndChainBuilder } from "../core/data/persisters/pg/query/formulas/PgAndChainBuilder";
+import { PgEntityInsertQueryBuilder } from "../core/data/persisters/pg/query/insert/PgEntityInsertQueryBuilder";
+import { parseIsoDateString } from "../core/types/IsoDateString";
 
 const LOG = LogService.createLogger('PgPersister');
 
 // FIXME: Make this lazy so that it doesn't happen if the PgPersister has not been used
 //        This could also be set on Pool only. Better to change there.
 types.setTypeParser(PgOid.RECORD as number, PgOidParserUtils.parseRecord);
+
+// Override timestamp conversion to force timestamp to be inserted in UTC
+types.setTypeParser(1114, (str) => {
+    const utcStr = `${str}Z`;
+    return parseIsoDateString( new Date(utcStr) , true);
+});
 
 /**
  * This persister implements entity store over PostgreSQL database.
@@ -42,6 +51,8 @@ export class PgPersister implements Persister {
 
     public static setLogLevel (level: LogLevel) {
         LOG.setLogLevel(level);
+        PgEntityInsertQueryBuilder.setLogLevel(level);
+        EntityUtils.setLogLevel(level);
     }
 
     private _pool: Pool | undefined;
@@ -122,12 +133,12 @@ export class PgPersister implements Persister {
         where    : Where | undefined
     ): Promise<number> {
 
-        const {tableName, fields} = metadata;
+        const {tableName, fields, temporalProperties} = metadata;
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
         builder.setTableName(tableName);
         builder.includeFormulaByString('COUNT(*)', 'count');
-        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
 
         LOG.debug(`count: queryString = `, queryString);
@@ -158,12 +169,12 @@ export class PgPersister implements Persister {
         metadata : EntityMetadata,
         where    : Where
     ): Promise<boolean> {
-        const {tableName, fields} = metadata;
+        const {tableName, fields, temporalProperties} = metadata;
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
         builder.setTableName(tableName);
         builder.includeFormulaByString('COUNT(*) >= 1', 'exists');
-        builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
+        builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
 
         const result = await this._query(queryString, queryValues);
@@ -189,14 +200,14 @@ export class PgPersister implements Persister {
         metadata : EntityMetadata,
         where    : Where | undefined,
     ): Promise<void> {
-        const {tableName, fields} = metadata;
+        const {tableName, fields, temporalProperties} = metadata;
         LOG.debug(`deleteAll: tableName = `, tableName);
         const builder = new PgEntityDeleteQueryBuilder();
         builder.setTablePrefix(this._tablePrefix);
         builder.setTableName(tableName);
         if ( where !== undefined ) {
             LOG.debug(`deleteAll: where = `, where);
-            builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
+            builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         }
         const [queryString, queryValues] = builder.build();
         LOG.debug(`deleteAll: queryString = `, queryString);
@@ -224,8 +235,8 @@ export class PgPersister implements Persister {
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
+        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(queryString, queryValues);
         return this._toEntityArray(result, metadata);
@@ -251,8 +262,8 @@ export class PgPersister implements Persister {
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
+        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(queryString, queryValues);
         return this._toFirstEntityOrUndefined<T, ID>(result, metadata);
@@ -278,23 +289,22 @@ export class PgPersister implements Persister {
             throw new TypeError(`Insert can only insert entities of the same time. There were some entities with different metadata than provided.`);
         }
 
-        const {tableName} = metadata;
+        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+
         LOG.debug(`insert: table= `, tableName);
-        const builder = MySqlEntityInsertQueryBuilder.create();
+
+        const builder = PgEntityInsertQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
         builder.setTableName(tableName);
-        // builder.setEntities(metadata, entities);
+
+        builder.appendEntityList(
+            entities,
+            fields,
+            temporalProperties,
+            [idPropertyName]
+        );
+
         const [ queryString, values ] = builder.build();
-
-        // const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
-        // const colNames = map(fields, (col) => col.columnName).join(",");
-        // const values = map(fields, (col) => col.propertyName).map((p) => (entity as any)[p]);
-        // const placeholders = Array.from({length: fields.length}, (_, i) => i + 1)
-        //                           .map((i) => `$${i}`)
-        //                           .reduce((prev, curr) => `${prev},${curr}`);
-        // const insert = `INSERT INTO ${this._tablePrefix}${tableName}(${colNames})
-        //                 VALUES (${placeholders}) RETURNING *`;
-
 
         LOG.debug(`insert: query = `, queryString, values);
         const result = await this._query(queryString, values);
@@ -310,16 +320,35 @@ export class PgPersister implements Persister {
         metadata: EntityMetadata,
         entity: T,
     ): Promise<T> {
-        const {tableName} = metadata;
-        const idColName = this._getIdColumnName(metadata);
-        const id = this._getId(entity, metadata);
-        const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
-        const setters = map(fields, (fld, idx) => `${fld.columnName}=$${idx + 2}`).reduce((prev, curr) => `${prev},${curr}`);
-        const values = [ id ].concat( map(fields, (col) => (entity as any)[col.propertyName]) );
-        const update = `UPDATE ${this._tablePrefix}${tableName}
-                        SET ${setters}
-                        WHERE ${idColName} = $1 RETURNING *`;
-        const result = await this._query(update, values);
+        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+
+        const idField = find(fields, item => item.propertyName === idPropertyName);
+        if (!idField) throw new TypeError(`Could not find id field using property "${idPropertyName}"`);
+        const idColumnName = idField.columnName;
+        if (!idColumnName) throw new TypeError(`Could not find id column using property "${idPropertyName}"`);
+
+        const entityId = has(entity,idPropertyName) ? (entity as any)[idPropertyName] : undefined;
+        if (!entityId) throw new TypeError(`Could not find entity id column using property "${idPropertyName}"`);
+
+        const builder = PgEntityUpdateQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+
+        builder.appendEntity(
+            entity,
+            fields,
+            temporalProperties,
+            [idPropertyName]
+        );
+
+        const where = PgAndChainBuilder.create();
+        where.setColumnEquals(this._tablePrefix+tableName, idColumnName, entityId);
+        builder.setWhereFromQueryBuilder(where);
+
+        // builder.setEntities(metadata, entities);
+        const [ queryString, queryValues ] = builder.build();
+
+        const result = await this._query(queryString, queryValues);
         return this._toFirstEntityOrFail<T, ID>(result, metadata);
     }
 
@@ -388,7 +417,7 @@ export class PgPersister implements Persister {
         result: QueryResult,
         metadata: EntityMetadata
     ) : T | undefined {
-        if (!result) throw new TypeError(`Result was not defined: ${result}`);
+        if ( !result ) throw new TypeError(`Result was not defined: ${result}`);
 
         if ( result.fields !== undefined ) LOG.debug(`result.fields = `, result.fields);
         if ( result.oid !== undefined ) LOG.debug(`result.oid = `, result.oid);
