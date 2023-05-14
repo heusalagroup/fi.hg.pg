@@ -193,7 +193,7 @@ export class PgPersister implements Persister {
         LOG.debug(`deleteAll: tableName = `, tableName);
         const builder = new PgEntityDeleteQueryBuilder();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         if ( where !== undefined ) {
             LOG.debug(`deleteAll: where = `, where);
             builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
@@ -219,7 +219,7 @@ export class PgPersister implements Persister {
         LOG.debug(`tableName = "${tableName}"`);
         builder.setTableName(tableName);
         if (sort !== undefined) {
-            builder.setOrderBy(sort, tableName, fields);
+            builder.setOrderByTableFields(sort, tableName, fields);
         }
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
@@ -246,7 +246,7 @@ export class PgPersister implements Persister {
         builder.setTablePrefix(this._tablePrefix);
         builder.setTableName(tableName);
         if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
+            builder.setOrderByTableFields(sort, tableName, fields);
         }
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
@@ -332,14 +332,15 @@ export class PgPersister implements Persister {
      */
     private async _query (
         query: string,
-        values: any[]
+        values: readonly any[]
     ) : Promise<QueryResult> {
         query = PgQueryUtils.parametizeQuery(query);
         LOG.debug(`Query "${query}" with values: `, values);
         const pool = this._pool;
         if (!pool) throw new TypeError(`The persister has been destroyed`);
         try {
-            return await pool.query(query, values);
+            // FIXME: The upstream library wants writable array. This might be error.
+            return await pool.query(query, values as any[]);
         } catch (err) {
             LOG.debug(`Query failed: `, query, values);
             throw TypeError(`Query failed: "${query}": ${err}`);
