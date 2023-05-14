@@ -16,14 +16,16 @@ import { isSafeInteger } from "../core/types/Number";
 import { PersisterMetadataManager } from "../core/data/persisters/types/PersisterMetadataManager";
 import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/PersisterMetadataManagerImpl";
 import { EntityFieldType } from "../core/data/types/EntityFieldType";
-import { PgEntitySelectQueryBuilder } from "../core/data/persisters/pg/builders/select/PgEntitySelectQueryBuilder";
+import { PgEntitySelectQueryBuilder } from "../core/data/persisters/pg/query/select/PgEntitySelectQueryBuilder";
 import { PgQueryUtils } from "../core/data/persisters/pg/utils/PgQueryUtils";
 import { PgOid } from "../core/data/persisters/pg/types/PgOid";
 import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
 import { Sort } from "../core/data/Sort";
 import { Where } from "../core/data/Where";
 import { find } from "../core/functions/find";
-import { PgEntityDeleteQueryBuilder } from "../core/data/persisters/pg/builders/delete/PgEntityDeleteQueryBuilder";
+import { PgEntityDeleteQueryBuilder } from "../core/data/persisters/pg/query/delete/PgEntityDeleteQueryBuilder";
+import { MySqlEntityInsertQueryBuilder } from "../core/data/persisters/mysql/query/insert/MySqlEntityInsertQueryBuilder";
+import { isArray } from "../core/types/Array";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -123,7 +125,7 @@ export class PgPersister implements Persister {
         const {tableName, fields} = metadata;
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         builder.includeFormulaByString('COUNT(*)', 'count');
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
         const [queryString, queryValues] = builder.build();
@@ -159,7 +161,7 @@ export class PgPersister implements Persister {
         const {tableName, fields} = metadata;
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         builder.includeFormulaByString('COUNT(*) >= 1', 'exists');
         builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields) );
         const [queryString, queryValues] = builder.build();
@@ -215,7 +217,7 @@ export class PgPersister implements Persister {
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
         LOG.debug(`tableName = "${tableName}"`);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         if (sort !== undefined) {
             builder.setOrderBy(sort, tableName, fields);
         }
@@ -242,7 +244,7 @@ export class PgPersister implements Persister {
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         if (sort) {
             builder.setOrderBy(sort, tableName, fields);
         }
@@ -262,21 +264,40 @@ export class PgPersister implements Persister {
      */
     public async insert<T extends Entity, ID extends EntityIdTypes> (
         metadata : EntityMetadata,
-        entity : T | readonly T[],
+        entities : T | readonly T[],
     ): Promise<T> {
+        LOG.debug(`insert: entities = `, entities, metadata);
+        if ( !isArray(entities) ) {
+            entities = [entities];
+        }
+        if ( entities?.length < 1 ) {
+            throw new TypeError(`No entities provided. You need to provide at least one entity to insert.`);
+        }
+        // Make sure all of our entities have the same metadata
+        if (!EntityUtils.areEntitiesSameType(entities)) {
+            throw new TypeError(`Insert can only insert entities of the same time. There were some entities with different metadata than provided.`);
+        }
+
         const {tableName} = metadata;
         LOG.debug(`insert: table= `, tableName);
-        LOG.debug(`insert: entity= `, entity);
-        const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
-        const colNames = map(fields, (col) => col.columnName).join(",");
-        const values = map(fields, (col) => col.propertyName).map((p) => (entity as any)[p]);
-        const placeholders = Array.from({length: fields.length}, (_, i) => i + 1)
-                                  .map((i) => `$${i}`)
-                                  .reduce((prev, curr) => `${prev},${curr}`);
-        const insert = `INSERT INTO ${this._tablePrefix}${tableName}(${colNames})
-                        VALUES (${placeholders}) RETURNING *`;
-        LOG.debug(`insert: query = `, insert, values);
-        const result = await this._query(insert, values);
+        const builder = MySqlEntityInsertQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+        // builder.setEntities(metadata, entities);
+        const [ queryString, values ] = builder.build();
+
+        // const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
+        // const colNames = map(fields, (col) => col.columnName).join(",");
+        // const values = map(fields, (col) => col.propertyName).map((p) => (entity as any)[p]);
+        // const placeholders = Array.from({length: fields.length}, (_, i) => i + 1)
+        //                           .map((i) => `$${i}`)
+        //                           .reduce((prev, curr) => `${prev},${curr}`);
+        // const insert = `INSERT INTO ${this._tablePrefix}${tableName}(${colNames})
+        //                 VALUES (${placeholders}) RETURNING *`;
+
+
+        LOG.debug(`insert: query = `, queryString, values);
+        const result = await this._query(queryString, values);
         LOG.debug(`insert: result = `, result);
         return this._toFirstEntityOrFail<T, ID>(result, metadata);
     }

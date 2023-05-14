@@ -29,7 +29,7 @@ export const INTEGRATION_TESTS_ENABLED : boolean = TEST_SCOPES.includes('integra
         setCrudRepositoryLogLevel(LogLevel.NONE);
         CrudRepositoryImpl.setLogLevel(LogLevel.NONE);
         PersisterMetadataManagerImpl.setLogLevel(LogLevel.NONE);
-        PgPersister.setLogLevel(LogLevel.DEBUG);
+        PgPersister.setLogLevel(LogLevel.NONE);
         PgOidParserUtils.setLogLevel(LogLevel.NONE);
     });
 
