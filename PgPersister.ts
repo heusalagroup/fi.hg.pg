@@ -10,32 +10,49 @@ import { map } from "../core/functions/map";
 import { EntityField } from "../core/data/types/EntityField";
 import { KeyValuePairs } from "../core/data/types/KeyValuePairs";
 import { first } from "../core/functions/first";
-import { reduce } from "../core/functions/reduce";
 import { LogService } from "../core/LogService";
 import { LogLevel } from "../core/types/LogLevel";
 import { isSafeInteger } from "../core/types/Number";
 import { PersisterMetadataManager } from "../core/data/persisters/types/PersisterMetadataManager";
 import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/PersisterMetadataManagerImpl";
-import { EntityFieldType } from "../core/data/types/EntityFieldType";
-import { PgEntitySelectQueryBuilder } from "./queries/select/PgEntitySelectQueryBuilder";
-import { PgAndBuilder } from "./queries/formulas/PgAndBuilder";
-import { PgQueryUtils } from "./utils/PgQueryUtils";
-import { PgOid } from "./types/PgOid";
-import { PgOidParserUtils } from "./utils/PgOidParserUtils";
+import { PgEntitySelectQueryBuilder } from "../core/data/persisters/pg/query/select/PgEntitySelectQueryBuilder";
+import { PgQueryUtils } from "../core/data/persisters/pg/utils/PgQueryUtils";
+import { PgOid } from "../core/data/persisters/pg/types/PgOid";
+import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
 import { Sort } from "../core/data/Sort";
+import { Where } from "../core/data/Where";
+import { find } from "../core/functions/find";
+import { PgEntityDeleteQueryBuilder } from "../core/data/persisters/pg/query/delete/PgEntityDeleteQueryBuilder";
+import { isArray } from "../core/types/Array";
+import { has } from "../core/functions/has";
+import { PgEntityUpdateQueryBuilder } from "../core/data/persisters/pg/query/update/PgEntityUpdateQueryBuilder";
+import { PgAndChainBuilder } from "../core/data/persisters/pg/query/formulas/PgAndChainBuilder";
+import { PgEntityInsertQueryBuilder } from "../core/data/persisters/pg/query/insert/PgEntityInsertQueryBuilder";
+import { parseIsoDateString } from "../core/types/IsoDateString";
 
 const LOG = LogService.createLogger('PgPersister');
 
 // FIXME: Make this lazy so that it doesn't happen if the PgPersister has not been used
+//        This could also be set on Pool only. Better to change there.
 types.setTypeParser(PgOid.RECORD as number, PgOidParserUtils.parseRecord);
+
+// Override timestamp conversion to force timestamp to be inserted in UTC
+types.setTypeParser(1114, (str) => {
+    const utcStr = `${str}Z`;
+    return parseIsoDateString( new Date(utcStr) , true);
+});
 
 /**
  * This persister implements entity store over PostgreSQL database.
+ *
+ * @see {@link Persister}
  */
 export class PgPersister implements Persister {
 
     public static setLogLevel (level: LogLevel) {
         LOG.setLogLevel(level);
+        PgEntityInsertQueryBuilder.setLogLevel(level);
+        EntityUtils.setLogLevel(level);
     }
 
     private _pool: Pool | undefined;
@@ -76,13 +93,17 @@ export class PgPersister implements Persister {
                 ...(allowExitOnIdle !== undefined ? {allowExitOnIdle} : {}),
             }
         );
-        this._pool.on('error', (err, client) => {
+        this._pool.on('error', (err/*, client*/) => {
             LOG.error(`Unexpected error on idle client: `, err);
         })
         this._metadataManager = new PersisterMetadataManagerImpl();
 
     }
 
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
     public destroy () {
         if (this._pool) {
             this._pool.removeAllListeners('error');
@@ -94,312 +115,261 @@ export class PgPersister implements Persister {
         }
     }
 
+    /**
+     * @inheritDoc
+     * @see {@link Persister.setupEntityMetadata}
+     * @see {@link PersisterMetadataManager.setupEntityMetadata}
+     */
     public setupEntityMetadata (metadata: EntityMetadata) : void {
         this._metadataManager.setupEntityMetadata(metadata);
     }
 
-    public async insert<T extends Entity, ID extends EntityIdTypes> (entity: T | readonly T[], metadata: EntityMetadata): Promise<T> {
-        const {tableName} = metadata;
-        const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
-        const colNames = map(fields, (col) => col.columnName).join(",");
-        const values = map(fields, (col) => col.propertyName).map((p) => (entity as any)[p]);
-        const placeholders = Array.from({length: fields.length}, (_, i) => i + 1)
-                                  .map((i) => `$${i}`)
-                                  .reduce((prev, curr) => `${prev},${curr}`);
-        const insert = `INSERT INTO ${this._tablePrefix}${tableName}(${colNames})
-                        VALUES (${placeholders}) RETURNING *`;
-        LOG.debug(`insert query = `, insert, values);
-        const result = await this._query(insert, values);
-        return this._toFirstEntityOrFail<T, ID>(result, metadata);
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async count<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where | undefined
+    ): Promise<number> {
+
+        const {tableName, fields, temporalProperties} = metadata;
+        const builder = PgEntitySelectQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+        builder.includeFormulaByString('COUNT(*)', 'count');
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
+        const [queryString, queryValues] = builder.build();
+
+        LOG.debug(`count: queryString = `, queryString);
+        LOG.debug(`count: queryValues = `, queryValues);
+
+        const result = await this._query(queryString, queryValues);
+        if (!result) throw new TypeError('Could not get result for PgPersister.countByCondition');
+        LOG.debug(`count: result = `, result);
+        const rows = result.rows;
+        LOG.debug(`count: rows = `, rows);
+        if (!rows) throw new TypeError('Could not get result rows for PgPersister.countByCondition');
+        const row = first(rows);
+        LOG.debug(`count: row = `, row);
+        if (!row) throw new TypeError('Could not get result row for PgPersister.countByCondition');
+        const count = row.count;
+        LOG.debug(`count: count = `, count);
+        if (!count) throw new TypeError('Could not read count for PgPersister.countByCondition');
+        const parsedCount = parseInt(count, 10);
+        if (!isSafeInteger(parsedCount)) throw new TypeError(`Could not read count for PgPersister.countByCondition`);
+        return parsedCount;
     }
 
-    public async update<T extends Entity, ID extends EntityIdTypes> (entity: T, metadata: EntityMetadata): Promise<T> {
-        const {tableName} = metadata;
-        const idColName = this._getIdColumnName(metadata);
-        const id = this._getId(entity, metadata);
-        const fields = metadata.fields.filter((fld) => !this._isIdField(fld, metadata) && fld.fieldType !== EntityFieldType.JOINED_ENTITY);
-        const setters = map(fields, (fld, idx) => `${fld.columnName}=$${idx + 2}`).reduce((prev, curr) => `${prev},${curr}`);
-        const values = [ id ].concat( map(fields, (col) => (entity as any)[col.propertyName]) );
-        const update = `UPDATE ${this._tablePrefix}${tableName}
-                        SET ${setters}
-                        WHERE ${idColName} = $1 RETURNING *`;
-        const result = await this._query(update, values);
-        return this._toFirstEntityOrFail<T, ID>(result, metadata);
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async existsBy<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where
+    ): Promise<boolean> {
+        const {tableName, fields, temporalProperties} = metadata;
+        const builder = PgEntitySelectQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+        builder.includeFormulaByString('COUNT(*) >= 1', 'exists');
+        builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
+        const [queryString, queryValues] = builder.build();
+
+        const result = await this._query(queryString, queryValues);
+        if (!result) throw new TypeError('Could not get result for PgPersister.countByCondition');
+        LOG.debug(`count: result = `, result);
+        const rows = result.rows;
+        LOG.debug(`count: rows = `, rows);
+        if (!rows) throw new TypeError('Could not get result rows for PgPersister.countByCondition');
+        const row = first(rows);
+        LOG.debug(`count: row = `, row);
+        if (!row) throw new TypeError('Could not get result row for PgPersister.countByCondition');
+        const exists = row.exists;
+        LOG.debug(`count: exists = `, exists);
+        return exists;
+
     }
 
-    public async delete<T extends Entity, ID extends EntityIdTypes> (entity: T, metadata: EntityMetadata): Promise<void> {
-        const {tableName} = metadata;
-        const idColName = this._getIdColumnName(metadata);
-        const id = this._getId(entity, metadata);
-        const sql = `DELETE
-                     FROM ${this._tablePrefix}${tableName}
-                     WHERE ${idColName} = $1 RETURNING *`;
-        await this._query(sql, [ id ]);
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async deleteAll<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where | undefined,
+    ): Promise<void> {
+        const {tableName, fields, temporalProperties} = metadata;
+        LOG.debug(`deleteAll: tableName = `, tableName);
+        const builder = new PgEntityDeleteQueryBuilder();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+        if ( where !== undefined ) {
+            LOG.debug(`deleteAll: where = `, where);
+            builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
+        }
+        const [queryString, queryValues] = builder.build();
+        LOG.debug(`deleteAll: queryString = `, queryString);
+        await this._query(queryString, queryValues);
     }
 
+    /**
+     * @inheritDoc
+     * @see {@link Persister.findAll}
+     */
     public async findAll<T extends Entity, ID extends EntityIdTypes> (
-        metadata: EntityMetadata,
+        metadata : EntityMetadata,
+        where    : Where | undefined,
         sort     : Sort | undefined
     ): Promise<T[]> {
-        LOG.debug(`findAll: metadata = `, metadata);
-        const {tableName, fields, oneToManyRelations, manyToOneRelations} = metadata;
-        LOG.debug(`findAll: tableName = `, tableName, fields);
+        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties } = metadata;
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
-        const builder = new PgEntitySelectQueryBuilder();
+        const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
-        if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
+        LOG.debug(`tableName = "${tableName}"`);
+        builder.setTableName(tableName);
+        if (sort !== undefined) {
+            builder.setOrderByTableFields(sort, tableName, fields);
         }
         builder.setGroupByColumn(mainIdColumnName);
-        builder.includeAllColumnsFromTable(tableName);
+        builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
+        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
-        LOG.debug(`findAll: queryString = `, queryString, queryValues);
         const result = await this._query(queryString, queryValues);
         return this._toEntityArray(result, metadata);
     }
 
-    public async findAllById<T extends Entity, ID extends EntityIdTypes> (
-        ids: readonly ID[],
-        metadata: EntityMetadata,
-        sort     : Sort | undefined
-    ): Promise<T[]> {
-
-        LOG.debug(`findAllById: ids = `, ids);
-        if (ids.length <= 0) throw new TypeError('At least one ID must be selected. Array was empty.');
-        LOG.debug(`findAllById: metadata = `, metadata);
-
-        const {tableName, fields, oneToManyRelations, manyToOneRelations} = metadata;
-        LOG.debug(`findAllById: tableName = `, tableName, fields);
-        const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
-        const builder = new PgEntitySelectQueryBuilder();
-        builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
-        if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
-        }
-        builder.setGroupByColumn(mainIdColumnName);
-        builder.includeAllColumnsFromTable(tableName);
-        builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        const where = new PgAndBuilder();
-        where.setColumnInList(builder.getCompleteTableName(tableName), mainIdColumnName, ids);
-        builder.setWhereFromQueryBuilder(where);
-
-        const [queryString, queryValues] = builder.build();
-
-        const result = await this._query(queryString, queryValues);
-        return this._toEntityArray<T, ID>(result, metadata);
-    }
-
-    public async findById<T extends Entity, ID extends EntityIdTypes> (
-        id: ID,
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async findBy<T extends Entity, ID extends EntityIdTypes> (
         metadata : EntityMetadata,
+        where    : Where,
         sort     : Sort | undefined
     ): Promise<T | undefined> {
-        LOG.debug(`findById: id = `, id);
-        LOG.debug(`findById: metadata = `, metadata);
-        const {tableName, fields, oneToManyRelations, manyToOneRelations} = metadata;
-        LOG.debug(`findById: tableName = `, tableName, fields);
+        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties } = metadata;
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
-        const builder = new PgEntitySelectQueryBuilder();
+        const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
+        builder.setTableName(tableName);
         if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
+            builder.setOrderByTableFields(sort, tableName, fields);
         }
         builder.setGroupByColumn(mainIdColumnName);
-        builder.includeAllColumnsFromTable(tableName);
+        builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        const where = new PgAndBuilder();
-        where.setColumnEquals(builder.getCompleteTableName(tableName), mainIdColumnName, id);
-        builder.setWhereFromQueryBuilder(where);
+        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(queryString, queryValues);
         return this._toFirstEntityOrUndefined<T, ID>(result, metadata);
-    }
-
-    public async findAllByProperty<T extends Entity, ID extends EntityIdTypes> (
-        property: string,
-        value: any,
-        metadata: EntityMetadata,
-        sort     : Sort | undefined
-    ): Promise<T[]> {
-        LOG.debug(`findAllByProperty: property = `, property);
-        LOG.debug(`findAllByProperty: metadata = `, metadata);
-        const {tableName, fields, oneToManyRelations, manyToOneRelations} = metadata;
-        const columnName = this._getColumnName(property, fields);
-        LOG.debug(`findAllByProperty: tableName = `, tableName, fields);
-        const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
-        const builder = new PgEntitySelectQueryBuilder();
-        builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
-        if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
-        }
-        builder.setGroupByColumn(mainIdColumnName);
-        builder.includeAllColumnsFromTable(tableName);
-        builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        const where = new PgAndBuilder();
-        where.setColumnEquals(builder.getCompleteTableName(tableName), columnName, value);
-        builder.setWhereFromQueryBuilder(where);
-        const [queryString, queryValues] = builder.build();
-        const result = await this._query(queryString, queryValues);
-        return this._toEntityArray<T, ID>(result, metadata);
-    }
-
-    private _getColumnName (propertyName: string, fields: readonly EntityField[]): string {
-        return fields.find((x) => x.propertyName === propertyName)?.columnName || "";
-    }
-
-    private _getIdColumnName (metadata: EntityMetadata) {
-        return this._getColumnName(metadata.idPropertyName, metadata.fields);
-    }
-
-    private _getId (entity: KeyValuePairs, metadata: EntityMetadata) {
-        return entity[metadata.idPropertyName];
-    }
-
-    private _isIdField (field: EntityField, metadata: EntityMetadata) {
-        return field.propertyName === metadata.idPropertyName;
-    }
-
-    public async count<T extends Entity, ID extends EntityIdTypes> (metadata: EntityMetadata): Promise<number> {
-        const {tableName} = metadata;
-        const sql = `SELECT COUNT(*) as count FROM ${this._tablePrefix}${tableName}`;
-        const result = await this._query(sql, []);
-        if (!result) throw new TypeError('Could not get result for PgPersister.countByProperty');
-        LOG.debug(`count: result = `, result);
-        const rows = result.rows;
-        LOG.debug(`count: rows = `, rows);
-        if (!rows) throw new TypeError('Could not get result rows for PgPersister.countByProperty');
-        const row = first(rows);
-        LOG.debug(`count: row = `, row);
-        if (!row) throw new TypeError('Could not get result row for PgPersister.countByProperty');
-        const count = row.count;
-        LOG.debug(`count: count = `, count);
-        if (!count) throw new TypeError('Could not read count for PgPersister.countByProperty');
-        const parsedCount = parseInt(count, 10);
-        if (!isSafeInteger(parsedCount)) throw new TypeError(`Could not read count for PgPersister.countByProperty`);
-        return parsedCount;
-    }
-
-    public async countByProperty<T extends Entity, ID extends EntityIdTypes> (property: string, value: any, metadata: EntityMetadata): Promise<number> {
-        const {tableName} = metadata;
-        const columnName = EntityUtils.getColumnName(property, metadata.fields);
-        const sql = `SELECT COUNT(*) as count FROM ${this._tablePrefix}${tableName} WHERE ${columnName} = $1`;
-        const result = await this._query(sql, [value]);
-        LOG.debug(`countByProperty: result = `, result);
-        if (!result) throw new TypeError('Could not get result for PgPersister.countByProperty');
-        const rows = result.rows;
-        LOG.debug(`count: rows = `, rows);
-        if (!rows) throw new TypeError('Could not get result rows for PgPersister.countByProperty');
-        const row = first(rows);
-        LOG.debug(`count: row = `, row);
-        if (!row) throw new TypeError('Could not get result row for PgPersister.countByProperty');
-        const count = row.count;
-        LOG.debug(`count: count = `, count);
-        if (!count) throw new TypeError('Could not read count for PgPersister.countByProperty');
-        const parsedCount = parseInt(count, 10);
-        if (!isSafeInteger(parsedCount)) throw new TypeError(`Could not read count for PgPersister.countByProperty`);
-        return parsedCount;
-    }
-
-    public async deleteAll<T extends Entity, ID extends EntityIdTypes> (metadata: EntityMetadata): Promise<void> {
-        const {tableName} = metadata;
-        const sql = `DELETE FROM ${this._tablePrefix}${tableName}`;
-        await this._query(sql, []);
     }
 
     /**
-     *
-     * @param ids
-     * @param metadata
-     * @FIXME This could be improved as single query
+     * @inheritDoc
+     * @see {@link Persister.destroy}
      */
-    public async deleteAllById<T extends Entity, ID extends EntityIdTypes> (ids: readonly ID[], metadata: EntityMetadata): Promise<void> {
-        await reduce(
-            ids,
-            async (prev: Promise<void>, id: ID) => {
-                await prev;
-                await this.deleteById(id, metadata);
-            },
-            Promise.resolve()
-        );
-    }
-
-    public async deleteAllByProperty<T extends Entity, ID extends EntityIdTypes> (
-        property: string,
-        value: any,
-        metadata: EntityMetadata
-    ): Promise<void> {
-        const {tableName} = metadata;
-        const columnName = EntityUtils.getColumnName(property, metadata.fields);
-        const select = `DELETE
-                        FROM ${this._tablePrefix}${tableName}
-                        WHERE ${columnName} = $1`;
-        await this._query(select, [ value ]);
-    }
-
-    public async deleteById<T extends Entity, ID extends EntityIdTypes> (id: ID, metadata: EntityMetadata): Promise<void> {
-        const {tableName} = metadata;
-        const idColumnName = this._getIdColumnName(metadata);
-        const query = `DELETE
-                        FROM ${this._tablePrefix}${tableName}
-                        WHERE ${idColumnName} = $1`;
-        await this._query(query, [ id ]);
-    }
-
-    public async existsByProperty<T extends Entity, ID extends EntityIdTypes> (property: string, value: any, metadata: EntityMetadata): Promise<boolean> {
-        const count = await this.countByProperty(property, value, metadata);
-        return count >= 1;
-    }
-
-    public async findByProperty<T extends Entity, ID extends EntityIdTypes> (
-        property: string,
-        value: any,
-        metadata: EntityMetadata,
-        sort     : Sort | undefined
-    ): Promise<T | undefined> {
-        const columnName = EntityUtils.getColumnName(property, metadata.fields);
-
-        LOG.debug(`findByProperty: columnName = `, columnName);
-        LOG.debug(`findByProperty: metadata = `, metadata);
-        const {tableName, fields, oneToManyRelations, manyToOneRelations} = metadata;
-        LOG.debug(`findByProperty: tableName = `, tableName, fields);
-        const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
-        const builder = new PgEntitySelectQueryBuilder();
-        builder.setTablePrefix(this._tablePrefix);
-        builder.setFromTable(tableName);
-        if (sort) {
-            builder.setOrderBy(sort, tableName, fields);
+    public async insert<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        entities : T | readonly T[],
+    ): Promise<T> {
+        LOG.debug(`insert: entities = `, entities, metadata);
+        if ( !isArray(entities) ) {
+            entities = [entities];
         }
-        builder.setGroupByColumn(mainIdColumnName);
-        builder.includeAllColumnsFromTable(tableName);
-        builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields);
-        const where = new PgAndBuilder();
-        where.setColumnEquals(builder.getCompleteTableName(tableName), columnName, value);
-        builder.setWhereFromQueryBuilder(where);
-        const [queryString, queryValues] = builder.build();
-        const result = await this._query(queryString, queryValues);
-        return this._toFirstEntityOrUndefined<T, ID>(result, metadata);
+        if ( entities?.length < 1 ) {
+            throw new TypeError(`No entities provided. You need to provide at least one entity to insert.`);
+        }
+        // Make sure all of our entities have the same metadata
+        if (!EntityUtils.areEntitiesSameType(entities)) {
+            throw new TypeError(`Insert can only insert entities of the same time. There were some entities with different metadata than provided.`);
+        }
+
+        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+
+        LOG.debug(`insert: table= `, tableName);
+
+        const builder = PgEntityInsertQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+
+        builder.appendEntityList(
+            entities,
+            fields,
+            temporalProperties,
+            [idPropertyName]
+        );
+
+        const [ queryString, values ] = builder.build();
+
+        LOG.debug(`insert: query = `, queryString, values);
+        const result = await this._query(queryString, values);
+        LOG.debug(`insert: result = `, result);
+        return this._toFirstEntityOrFail<T, ID>(result, metadata);
     }
 
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async update<T extends Entity, ID extends EntityIdTypes> (
+        metadata: EntityMetadata,
+        entity: T,
+    ): Promise<T> {
+        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+
+        const idField = find(fields, item => item.propertyName === idPropertyName);
+        if (!idField) throw new TypeError(`Could not find id field using property "${idPropertyName}"`);
+        const idColumnName = idField.columnName;
+        if (!idColumnName) throw new TypeError(`Could not find id column using property "${idPropertyName}"`);
+
+        const entityId = has(entity,idPropertyName) ? (entity as any)[idPropertyName] : undefined;
+        if (!entityId) throw new TypeError(`Could not find entity id column using property "${idPropertyName}"`);
+
+        const builder = PgEntityUpdateQueryBuilder.create();
+        builder.setTablePrefix(this._tablePrefix);
+        builder.setTableName(tableName);
+
+        builder.appendEntity(
+            entity,
+            fields,
+            temporalProperties,
+            [idPropertyName]
+        );
+
+        const where = PgAndChainBuilder.create();
+        where.setColumnEquals(this._tablePrefix+tableName, idColumnName, entityId);
+        builder.setWhereFromQueryBuilder(where);
+
+        // builder.setEntities(metadata, entities);
+        const [ queryString, queryValues ] = builder.build();
+
+        const result = await this._query(queryString, queryValues);
+        return this._toFirstEntityOrFail<T, ID>(result, metadata);
+    }
+
+    /**
+     * Performs the actual SQL query.
+     *
+     * @param query The query as a string with parameter placeholders
+     * @param values The values for parameter placeholders
+     * @private
+     */
     private async _query (
         query: string,
-        values: any[]
-    ) : Promise<QueryResult<any>> {
+        values: readonly any[]
+    ) : Promise<QueryResult> {
         query = PgQueryUtils.parametizeQuery(query);
         LOG.debug(`Query "${query}" with values: `, values);
         const pool = this._pool;
         if (!pool) throw new TypeError(`The persister has been destroyed`);
         try {
-            return await pool.query(query, values);
+            // FIXME: The upstream library wants writable array. This might be error.
+            return await pool.query(query, values as any[]);
         } catch (err) {
             LOG.debug(`Query failed: `, query, values);
             throw TypeError(`Query failed: "${query}": ${err}`);
@@ -414,7 +384,7 @@ export class PgPersister implements Persister {
      * @private
      */
     private _toEntityArray<T extends Entity, ID extends EntityIdTypes> (
-        result: QueryResult<any>,
+        result: QueryResult,
         metadata: EntityMetadata
     ) : T[] {
         if (!result) throw new TypeError(`Illegal result from query`);
@@ -444,10 +414,10 @@ export class PgPersister implements Persister {
      * @private
      */
     private _toFirstEntityOrUndefined<T extends Entity, ID extends EntityIdTypes> (
-        result: QueryResult<any>,
+        result: QueryResult,
         metadata: EntityMetadata
     ) : T | undefined {
-        if (!result) throw new TypeError(`Result was not defined: ${result}`);
+        if ( !result ) throw new TypeError(`Result was not defined: ${result}`);
 
         if ( result.fields !== undefined ) LOG.debug(`result.fields = `, result.fields);
         if ( result.oid !== undefined ) LOG.debug(`result.oid = `, result.oid);
@@ -463,20 +433,59 @@ export class PgPersister implements Persister {
     }
 
     /**
-     * Turns the result set into single entity, and fails if cannot do that.
+     * Turns the result set into single entity, and fails if it cannot do that.
      *
      * @param result
      * @param metadata
      * @private
      */
     private _toFirstEntityOrFail<T extends Entity, ID extends EntityIdTypes> (
-        result: QueryResult<any>,
+        result: QueryResult,
         metadata: EntityMetadata
     ) : T {
         const item = this._toFirstEntityOrUndefined<T, ID>(result, metadata);
         if (item === undefined) throw new TypeError(`Result was not found`);
         LOG.debug(`_toFirstEntityOrFail: item = `, item);
         return item;
+    }
+
+    /**
+     *
+     * @param propertyName
+     * @param fields
+     * @private
+     */
+    private _getColumnName (propertyName: string, fields: readonly EntityField[]): string {
+        return find(fields,(x) => x.propertyName === propertyName)?.columnName || "";
+    }
+
+    /**
+     *
+     * @param metadata
+     * @private
+     */
+    private _getIdColumnName (metadata: EntityMetadata) {
+        return this._getColumnName(metadata.idPropertyName, metadata.fields);
+    }
+
+    /**
+     *
+     * @param entity
+     * @param metadata
+     * @private
+     */
+    private _getId (entity: KeyValuePairs, metadata: EntityMetadata) {
+        return entity[metadata.idPropertyName];
+    }
+
+    /**
+     *
+     * @param field
+     * @param metadata
+     * @private
+     */
+    private _isIdField (field: EntityField, metadata: EntityMetadata) {
+        return field.propertyName === metadata.idPropertyName;
     }
 
 }
