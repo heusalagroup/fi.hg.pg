@@ -9,7 +9,7 @@ import { setCrudRepositoryLogLevel } from "../core/data/types/CrudRepository";
 import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/PersisterMetadataManagerImpl";
 import { parseNonEmptyString } from "../core/types/String";
 import { PgPersister } from "./PgPersister";
-import { PgOidParserUtils } from "./utils/PgOidParserUtils";
+import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
 
 export const TEST_SCOPES             : readonly string[] = (parseNonEmptyString(process?.env?.TEST_SCOPES) ?? '').split(/[,| :;+]+/);
 export const POSTGRES_HOSTNAME          : string   = parseNonEmptyString(process?.env?.TEST_POSTGRES_HOSTNAME)          ?? 'localhost';
@@ -50,9 +50,7 @@ export const INTEGRATION_TESTS_ENABLED : boolean = TEST_SCOPES.includes('integra
                 undefined,
                 undefined,
                 undefined,
-            ),
-            true,
-            true
+            )
         );
     });
 
