@@ -41,3 +41,13 @@ CREATE TABLE prefix_cart_items (
   cart_id BIGINT NOT NULL,
   cart_item_name varchar(255) NOT NULL default ''
 );
+
+--
+-- Table structure for table prefix_type_test_json_data
+--
+
+DROP TABLE IF EXISTS prefix_type_test_json_data;
+CREATE TABLE prefix_type_test_json_data (
+  data_id BIGSERIAL PRIMARY KEY,
+  data_json JSON NOT NULL
+);
