@@ -29,6 +29,7 @@ import { PgEntityUpdateQueryBuilder } from "../core/data/persisters/pg/query/upd
 import { PgAndChainBuilder } from "../core/data/persisters/pg/query/formulas/PgAndChainBuilder";
 import { PgEntityInsertQueryBuilder } from "../core/data/persisters/pg/query/insert/PgEntityInsertQueryBuilder";
 import { parseIsoDateString } from "../core/types/IsoDateString";
+import { PersisterType } from "../core/data/persisters/types/PersisterType";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -98,6 +99,14 @@ export class PgPersister implements Persister {
         })
         this._metadataManager = new PersisterMetadataManagerImpl();
 
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.getPersisterType}
+     */
+    public getPersisterType (): PersisterType {
+        return PersisterType.POSTGRESQL;
     }
 
     /**

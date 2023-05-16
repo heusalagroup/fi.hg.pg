@@ -10,6 +10,7 @@ import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/Pers
 import { parseNonEmptyString } from "../core/types/String";
 import { PgPersister } from "./PgPersister";
 import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
+import { PersisterType } from "../core/data/persisters/types/PersisterType";
 
 export const TEST_SCOPES             : readonly string[] = (parseNonEmptyString(process?.env?.TEST_SCOPES) ?? '').split(/[,| :;+]+/);
 export const POSTGRES_HOSTNAME          : string   = parseNonEmptyString(process?.env?.TEST_POSTGRES_HOSTNAME)          ?? 'localhost';
@@ -35,6 +36,7 @@ export const INTEGRATION_TESTS_ENABLED : boolean = TEST_SCOPES.includes('integra
 
     describe('PostgreSQL', () => {
         allRepositoryTests(
+            PersisterType.POSTGRESQL,
             () => new PgPersister(
                 POSTGRES_HOSTNAME,
                 POSTGRES_USERNAME,

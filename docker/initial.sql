@@ -51,3 +51,13 @@ CREATE TABLE prefix_type_test_json_data (
   data_id BIGSERIAL PRIMARY KEY,
   data_json JSON NOT NULL
 );
+
+--
+-- Table structure for table prefix_type_test_jsonb_data
+--
+
+DROP TABLE IF EXISTS prefix_type_test_jsonb_data;
+CREATE TABLE prefix_type_test_jsonb_data (
+  data_id BIGSERIAL PRIMARY KEY,
+  data_json JSONB NOT NULL
+);
