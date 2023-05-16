@@ -74,7 +74,8 @@ export class PgPersister implements Persister {
         allowExitOnIdle : boolean | undefined = undefined,
         queryTimeout: number | undefined = undefined,
         statementTimeout: number | undefined = undefined,
-        idleInTransactionSessionTimeout: number | undefined = undefined
+        idleInTransactionSessionTimeout: number | undefined = undefined,
+        port : number | undefined = undefined,
     ) {
         this._tablePrefix = tablePrefix;
         this._pool = new Pool(
@@ -83,6 +84,7 @@ export class PgPersister implements Persister {
                 user,
                 password,
                 database,
+                ...(port !== undefined ? { port } : {}),
                 ...(ssl !== undefined ? {ssl} : {}),
                 ...(applicationName !== undefined ? {application_name: applicationName} : {}),
                 ...(queryTimeout !== undefined ? {query_timeout: queryTimeout} : {}),
