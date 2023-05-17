@@ -234,11 +234,12 @@ export class PgPersister implements Persister {
         where    : Where | undefined,
         sort     : Sort | undefined
     ): Promise<T[]> {
+        LOG.debug(`findAll: `, metadata, where, sort);
         const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties } = metadata;
+        LOG.debug(`tableName = "${tableName}"`);
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
-        LOG.debug(`tableName = "${tableName}"`);
         builder.setTableName(tableName);
         if (sort !== undefined) {
             builder.setOrderByTableFields(sort, tableName, fields);
