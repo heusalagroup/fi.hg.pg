@@ -32,6 +32,17 @@ CREATE TABLE prefix_carts (
 );
 
 --
+-- Table structure for table contacts
+--
+
+DROP TABLE IF EXISTS prefix_contacts;
+CREATE TABLE prefix_contacts (
+  contact_id BIGSERIAL PRIMARY KEY,
+  cart_id BIGINT NOT NULL,
+  contact_name varchar(255) NOT NULL default ''
+);
+
+--
 -- Table structure for table cart_items
 --
 
