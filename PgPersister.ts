@@ -15,21 +15,22 @@ import { LogLevel } from "../core/types/LogLevel";
 import { isSafeInteger } from "../core/types/Number";
 import { PersisterMetadataManager } from "../core/data/persisters/types/PersisterMetadataManager";
 import { PersisterMetadataManagerImpl } from "../core/data/persisters/types/PersisterMetadataManagerImpl";
-import { PgEntitySelectQueryBuilder } from "../core/data/persisters/pg/query/select/PgEntitySelectQueryBuilder";
-import { PgQueryUtils } from "../core/data/persisters/pg/utils/PgQueryUtils";
+import { PgEntitySelectQueryBuilder } from "../core/data/query/pg/select/PgEntitySelectQueryBuilder";
+import { PgQueryUtils } from "../core/data/query/pg/utils/PgQueryUtils";
 import { PgOid } from "../core/data/persisters/pg/types/PgOid";
 import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
 import { Sort } from "../core/data/Sort";
 import { Where } from "../core/data/Where";
 import { find } from "../core/functions/find";
-import { PgEntityDeleteQueryBuilder } from "../core/data/persisters/pg/query/delete/PgEntityDeleteQueryBuilder";
+import { PgEntityDeleteQueryBuilder } from "../core/data/query/pg/delete/PgEntityDeleteQueryBuilder";
 import { isArray } from "../core/types/Array";
 import { has } from "../core/functions/has";
-import { PgEntityUpdateQueryBuilder } from "../core/data/persisters/pg/query/update/PgEntityUpdateQueryBuilder";
-import { PgAndChainBuilder } from "../core/data/persisters/pg/query/formulas/PgAndChainBuilder";
-import { PgEntityInsertQueryBuilder } from "../core/data/persisters/pg/query/insert/PgEntityInsertQueryBuilder";
+import { PgEntityUpdateQueryBuilder } from "../core/data/query/pg/update/PgEntityUpdateQueryBuilder";
+import { PgAndChainBuilder } from "../core/data/query/pg/formulas/PgAndChainBuilder";
+import { PgEntityInsertQueryBuilder } from "../core/data/query/pg/insert/PgEntityInsertQueryBuilder";
 import { parseIsoDateString } from "../core/types/IsoDateString";
 import { PersisterType } from "../core/data/persisters/types/PersisterType";
+import { TableFieldInfoCallback, TableFieldInfoResponse } from "../core/data/query/sql/select/EntitySelectQueryBuilder";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -59,6 +60,7 @@ export class PgPersister implements Persister {
     private _pool: Pool | undefined;
     private readonly _metadataManager : PersisterMetadataManager;
     private readonly _tablePrefix : string;
+    private readonly _fetchTableInfo : TableFieldInfoCallback;
 
     public constructor (
         host: string,
@@ -100,7 +102,13 @@ export class PgPersister implements Persister {
             LOG.error(`Unexpected error on idle client: `, err);
         })
         this._metadataManager = new PersisterMetadataManagerImpl();
-
+        this._fetchTableInfo = (tableName: string) : TableFieldInfoResponse => {
+            const mappedMetadata = this._metadataManager.getMetadataByTable(tableName);
+            if (!mappedMetadata) throw new TypeError(`Could not find metadata for table "${tableName}"`);
+            const mappedFields = mappedMetadata.fields;
+            const temporalProperties = mappedMetadata.temporalProperties;
+            return [mappedFields, temporalProperties];
+        };
     }
 
     /**
@@ -246,8 +254,8 @@ export class PgPersister implements Persister {
         }
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
-        builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        builder.setOneToManyRelations(oneToManyRelations, this._fetchTableInfo);
+        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(queryString, queryValues);
@@ -273,8 +281,8 @@ export class PgPersister implements Persister {
         }
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
-        builder.setOneToManyRelations(oneToManyRelations, this._metadataManager);
-        builder.setManyToOneRelations(manyToOneRelations, this._metadataManager, fields, temporalProperties);
+        builder.setOneToManyRelations(oneToManyRelations, this._fetchTableInfo);
+        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(queryString, queryValues);
