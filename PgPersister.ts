@@ -28,9 +28,9 @@ import { has } from "../core/functions/has";
 import { PgEntityUpdateQueryBuilder } from "../core/data/query/pg/update/PgEntityUpdateQueryBuilder";
 import { PgAndChainBuilder } from "../core/data/query/pg/formulas/PgAndChainBuilder";
 import { PgEntityInsertQueryBuilder } from "../core/data/query/pg/insert/PgEntityInsertQueryBuilder";
-import { parseIsoDateString } from "../core/types/IsoDateString";
 import { PersisterType } from "../core/data/persisters/types/PersisterType";
 import { TableFieldInfoCallback, TableFieldInfoResponse } from "../core/data/query/sql/select/EntitySelectQueryBuilder";
+import { parseIsoDateString } from "../core/types/Date";
 
 const LOG = LogService.createLogger('PgPersister');
 
