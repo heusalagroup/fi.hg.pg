@@ -31,6 +31,8 @@ import { PgEntityInsertQueryBuilder } from "../core/data/query/pg/insert/PgEntit
 import { PersisterType } from "../core/data/persisters/types/PersisterType";
 import { TableFieldInfoCallback, TableFieldInfoResponse } from "../core/data/query/sql/select/EntitySelectQueryBuilder";
 import { parseIsoDateString } from "../core/types/Date";
+import { PersisterEntityManagerImpl } from "../core/data/persisters/types/PersisterEntityManagerImpl";
+import { PersisterEntityManager } from "../core/data/persisters/types/PersisterEntityManager";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -59,6 +61,7 @@ export class PgPersister implements Persister {
 
     private _pool: Pool | undefined;
     private readonly _metadataManager : PersisterMetadataManager;
+    private readonly _entityManager : PersisterEntityManager;
     private readonly _tablePrefix : string;
     private readonly _fetchTableInfo : TableFieldInfoCallback;
 
@@ -102,6 +105,7 @@ export class PgPersister implements Persister {
             LOG.error(`Unexpected error on idle client: `, err);
         })
         this._metadataManager = new PersisterMetadataManagerImpl();
+        this._entityManager = PersisterEntityManagerImpl.create();
         this._fetchTableInfo = (tableName: string) : TableFieldInfoResponse => {
             const mappedMetadata = this._metadataManager.getMetadataByTable(tableName);
             if (!mappedMetadata) throw new TypeError(`Could not find metadata for table "${tableName}"`);
@@ -347,8 +351,26 @@ export class PgPersister implements Persister {
         const idColumnName = idField.columnName;
         if (!idColumnName) throw new TypeError(`Could not find id column using property "${idPropertyName}"`);
 
-        const entityId = has(entity,idPropertyName) ? (entity as any)[idPropertyName] : undefined;
+        const entityId = has(entity, idPropertyName) ? (entity as any)[idPropertyName] : undefined;
         if (!entityId) throw new TypeError(`Could not find entity id column using property "${idPropertyName}"`);
+
+        const updateFields = this._entityManager.getChangedFields(
+            entity,
+            fields
+        );
+
+        if (updateFields.length === 0) {
+            LOG.debug(`Entity did not any updatable properties changed. Saved nothing.`);
+            const item : T | undefined = await this.findBy(
+                metadata,
+                Where.propertyEquals(idPropertyName, entityId),
+                Sort.by(idPropertyName)
+            );
+            if (!item) {
+                throw new TypeError(`Entity was not stored in this persister for ID: ${entityId}`);
+            }
+            return item;
+        }
 
         const builder = PgEntityUpdateQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
@@ -356,7 +378,7 @@ export class PgPersister implements Persister {
 
         builder.appendEntity(
             entity,
-            fields,
+            updateFields,
             temporalProperties,
             [idPropertyName]
         );
@@ -420,7 +442,7 @@ export class PgPersister implements Persister {
             result.rows,
             (row: any) => {
                 if (!row) throw new TypeError(`Unexpected illegal row: ${row}`);
-                return EntityUtils.toEntity<T, ID>(row, metadata, this._metadataManager);
+                return this._toEntity<T, ID>(row, metadata);
             }
         );
     }
@@ -449,7 +471,7 @@ export class PgPersister implements Persister {
         const row = first(rows);
         if (!row) return undefined;
         LOG.debug(`_toFirstEntityOrUndefined: row = `, row);
-        return EntityUtils.toEntity<T, ID>(row, metadata, this._metadataManager);
+        return this._toEntity<T, ID>(row, metadata);
     }
 
     /**
@@ -467,6 +489,15 @@ export class PgPersister implements Persister {
         if (item === undefined) throw new TypeError(`Result was not found`);
         LOG.debug(`_toFirstEntityOrFail: item = `, item);
         return item;
+    }
+
+    private _toEntity<T extends Entity, ID extends EntityIdTypes> (
+        row      : KeyValuePairs,
+        metadata : EntityMetadata
+    ) : T {
+        const entity = EntityUtils.toEntity<T, ID>(row, metadata, this._metadataManager);
+        this._entityManager.saveLastEntityState(entity);
+        return entity;
     }
 
     /**

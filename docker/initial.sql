@@ -7,7 +7,8 @@ DROP TABLE IF EXISTS prefix_foos;
 CREATE TABLE prefix_foos (
   foo_id BIGSERIAL PRIMARY KEY,
   foo_date TIMESTAMP NOT NULL,
-  foo_name varchar(255) NOT NULL default ''
+  foo_name varchar(255) NOT NULL default '',
+  non_updatable VARCHAR(255) NOT NULL default ''
 );
 
 --
