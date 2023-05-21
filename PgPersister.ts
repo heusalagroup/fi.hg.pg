@@ -1,15 +1,16 @@
 // Copyright (c) 2022-2023. Heusala Group Oy. All rights reserved.
 // Copyright (c) 2020-2021. Sendanor. All rights reserved.
 
-import { Pool, QueryResult, types } from "pg";
+import { first } from "../core/functions/first";
+import { map } from "../core/functions/map";
+import { find } from "../core/functions/find";
+import { has } from "../core/functions/has";
+import { Pool, PoolClient, QueryResult, types } from "pg";
 import { EntityMetadata } from "../core/data/types/EntityMetadata";
 import { Persister } from "../core/data/types/Persister";
 import { Entity, EntityIdTypes } from "../core/data/Entity";
 import { EntityUtils } from "../core/data/utils/EntityUtils";
-import { map } from "../core/functions/map";
-import { EntityField } from "../core/data/types/EntityField";
 import { KeyValuePairs } from "../core/data/types/KeyValuePairs";
-import { first } from "../core/functions/first";
 import { LogService } from "../core/LogService";
 import { LogLevel } from "../core/types/LogLevel";
 import { isSafeInteger } from "../core/types/Number";
@@ -21,10 +22,8 @@ import { PgOid } from "../core/data/persisters/pg/types/PgOid";
 import { PgOidParserUtils } from "../core/data/persisters/pg/utils/PgOidParserUtils";
 import { Sort } from "../core/data/Sort";
 import { Where } from "../core/data/Where";
-import { find } from "../core/functions/find";
 import { PgEntityDeleteQueryBuilder } from "../core/data/query/pg/delete/PgEntityDeleteQueryBuilder";
 import { isArray } from "../core/types/Array";
-import { has } from "../core/functions/has";
 import { PgEntityUpdateQueryBuilder } from "../core/data/query/pg/update/PgEntityUpdateQueryBuilder";
 import { PgAndChainBuilder } from "../core/data/query/pg/formulas/PgAndChainBuilder";
 import { PgEntityInsertQueryBuilder } from "../core/data/query/pg/insert/PgEntityInsertQueryBuilder";
@@ -33,6 +32,8 @@ import { TableFieldInfoCallback, TableFieldInfoResponse } from "../core/data/que
 import { parseIsoDateString } from "../core/types/Date";
 import { PersisterEntityManagerImpl } from "../core/data/persisters/types/PersisterEntityManagerImpl";
 import { PersisterEntityManager } from "../core/data/persisters/types/PersisterEntityManager";
+import { EntityCallbackUtils } from "../core/data/utils/EntityCallbackUtils";
+import { EntityCallbackType } from "../core/data/types/EntityCallbackType";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -155,6 +156,149 @@ export class PgPersister implements Persister {
         metadata : EntityMetadata,
         where    : Where | undefined
     ): Promise<number> {
+        return await this._transaction(
+            async (connection) => this._count(connection, metadata, where)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async existsBy<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where
+    ): Promise<boolean> {
+        return await this._transaction(
+            async (connection) => this._existsBy(connection, metadata, where)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async deleteAll<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where | undefined,
+    ): Promise<void> {
+        return await this._transaction(
+            async (connection) => this._deleteAll(connection, metadata, where)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.findAll}
+     */
+    public async findAll<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where | undefined,
+        sort     : Sort | undefined
+    ): Promise<T[]> {
+        return await this._transaction(
+            async (connection) => this._findAll(connection, metadata, where, sort)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async findBy<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        where    : Where,
+        sort     : Sort | undefined
+    ): Promise<T | undefined> {
+        return await this._transaction(
+            async (connection) => this._findBy(connection, metadata, where, sort)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async insert<T extends Entity, ID extends EntityIdTypes> (
+        metadata : EntityMetadata,
+        entities : T | readonly T[],
+    ): Promise<T> {
+        return await this._transaction(
+            async (connection) => this._insert(connection, metadata, entities)
+        );
+    }
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    public async update<T extends Entity, ID extends EntityIdTypes> (
+        metadata: EntityMetadata,
+        entity: T,
+    ): Promise<T> {
+        return await this._transaction(
+            async (connection) => this._update(connection, metadata, entity)
+        );
+    }
+
+
+    protected async _transaction (callback: (connection : PoolClient) => Promise<any>) {
+        let connection : PoolClient | undefined = undefined;
+        let returnValue : any = undefined;
+        try {
+            connection = await this._getConnection();
+            await this._beginTransaction(connection);
+            returnValue = await callback(connection);
+            await this._commitTransaction(connection);
+        } catch (err) {
+            if (connection) {
+                try {
+                    await this._rollbackTransaction(connection);
+                } catch (err) {
+                    LOG.warn(`Warning! Failed to rollback transaction: `, err);
+                }
+            }
+            throw err;
+        } finally {
+            if (connection) {
+                try {
+                    connection.release();
+                } catch (err) {
+                    LOG.warn(`Warning! Failed to release connection: `, err);
+                }
+            }
+        }
+        return returnValue;
+    }
+
+    protected async _beginTransaction (connection : PoolClient) : Promise<void> {
+        await connection.query('BEGIN');
+    }
+
+    protected async _commitTransaction (connection : PoolClient) : Promise<void> {
+        await connection.query('COMMIT');
+    }
+
+    protected async _rollbackTransaction (connection : PoolClient) : Promise<void> {
+        await connection.query('ROLLBACK');
+    }
+
+    protected async _getConnection () : Promise<PoolClient> {
+        const pool = this._pool;
+        if (!pool) throw new TypeError(`The pool was not initialized`);
+        return pool.connect();
+    }
+
+
+    /**
+     * @inheritDoc
+     * @see {@link Persister.destroy}
+     */
+    private async _count<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
+        metadata : EntityMetadata,
+        where    : Where | undefined
+    ): Promise<number> {
 
         const {tableName, fields, temporalProperties} = metadata;
         const builder = PgEntitySelectQueryBuilder.create();
@@ -167,7 +311,7 @@ export class PgPersister implements Persister {
         LOG.debug(`count: queryString = `, queryString);
         LOG.debug(`count: queryValues = `, queryValues);
 
-        const result = await this._query(queryString, queryValues);
+        const result = await this._query(connection, queryString, queryValues);
         if (!result) throw new TypeError('Could not get result for PgPersister.countByCondition');
         LOG.debug(`count: result = `, result);
         const rows = result.rows;
@@ -188,7 +332,8 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async existsBy<T extends Entity, ID extends EntityIdTypes> (
+    private async _existsBy<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where
     ): Promise<boolean> {
@@ -200,7 +345,7 @@ export class PgPersister implements Persister {
         builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
 
-        const result = await this._query(queryString, queryValues);
+        const result = await this._query(connection, queryString, queryValues);
         if (!result) throw new TypeError('Could not get result for PgPersister.countByCondition');
         LOG.debug(`count: result = `, result);
         const rows = result.rows;
@@ -219,35 +364,83 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async deleteAll<T extends Entity, ID extends EntityIdTypes> (
+    private async _deleteAll<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where | undefined,
     ): Promise<void> {
-        const {tableName, fields, temporalProperties} = metadata;
-        LOG.debug(`deleteAll: tableName = `, tableName);
-        const builder = new PgEntityDeleteQueryBuilder();
-        builder.setTablePrefix(this._tablePrefix);
-        builder.setTableName(tableName);
-        if ( where !== undefined ) {
-            LOG.debug(`deleteAll: where = `, where);
-            builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
+        let entities : T[] = [];
+        const {tableName, fields, temporalProperties, callbacks, idPropertyName } = metadata;
+        const hasPreRemoveCallbacks = EntityCallbackUtils.hasCallbacks(callbacks, EntityCallbackType.PRE_REMOVE);
+        const hasPostRemoveCallbacks = EntityCallbackUtils.hasCallbacks(callbacks, EntityCallbackType.POST_REMOVE);
+
+        if ( hasPreRemoveCallbacks || hasPostRemoveCallbacks ) {
+            entities = await this._findAll<T, ID>(connection, metadata, where, undefined);
         }
-        const [queryString, queryValues] = builder.build();
-        LOG.debug(`deleteAll: queryString = `, queryString);
-        await this._query(queryString, queryValues);
+
+        if (hasPreRemoveCallbacks) {
+            await EntityCallbackUtils.runPreRemoveCallbacks(
+                entities,
+                callbacks
+            );
+        }
+
+        if ( !hasPreRemoveCallbacks && !hasPostRemoveCallbacks ) {
+
+            LOG.debug( `deleteAll: tableName = `, tableName );
+            const builder = new PgEntityDeleteQueryBuilder();
+            builder.setTablePrefix( this._tablePrefix );
+            builder.setTableName( tableName );
+            if ( where !== undefined ) {
+                LOG.debug( `deleteAll: where = `, where );
+                builder.setWhereFromQueryBuilder( builder.buildAnd( where, tableName, fields, temporalProperties ) );
+            }
+            const [ queryString, queryValues ] = builder.build();
+            LOG.debug( `deleteAll: queryString = `, queryString );
+            await this._query( connection, queryString, queryValues );
+
+        } else if (entities?.length) {
+
+            const builder = new PgEntityDeleteQueryBuilder();
+            builder.setTablePrefix( this._tablePrefix );
+            builder.setTableName( tableName );
+            builder.setWhereFromQueryBuilder(
+                builder.buildAnd(
+                    Where.propertyListEquals(
+                        idPropertyName,
+                        map(entities, (item) => (item as any)[idPropertyName] )
+                    ),
+                    tableName,
+                    fields,
+                    temporalProperties
+                )
+            );
+            const [queryString, queryValues] = builder.build();
+            await this._query(connection, queryString, queryValues);
+
+            if (hasPostRemoveCallbacks) {
+                await EntityCallbackUtils.runPostRemoveCallbacks(
+                    entities,
+                    callbacks
+                );
+            }
+
+        }
+
     }
 
     /**
      * @inheritDoc
      * @see {@link Persister.findAll}
      */
-    public async findAll<T extends Entity, ID extends EntityIdTypes> (
+    private async _findAll<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where | undefined,
         sort     : Sort | undefined
     ): Promise<T[]> {
         LOG.debug(`findAll: `, metadata, where, sort);
-        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties } = metadata;
+        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties, callbacks } = metadata;
         LOG.debug(`tableName = "${tableName}"`);
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
         const builder = PgEntitySelectQueryBuilder.create();
@@ -262,20 +455,26 @@ export class PgPersister implements Persister {
         builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
-        const result = await this._query(queryString, queryValues);
-        return this._toEntityArray(result, metadata);
+        const result = await this._query(connection, queryString, queryValues);
+        const resultEntity = this._toEntityArray(result, metadata);
+        await EntityCallbackUtils.runPostLoadCallbacks(
+            resultEntity,
+            callbacks
+        );
+        return resultEntity as unknown as T[];
     }
 
     /**
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async findBy<T extends Entity, ID extends EntityIdTypes> (
+    private async _findBy<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where,
         sort     : Sort | undefined
     ): Promise<T | undefined> {
-        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties } = metadata;
+        const { tableName, fields, oneToManyRelations, manyToOneRelations, temporalProperties, callbacks } = metadata;
         const mainIdColumnName : string = EntityUtils.getIdColumnName(metadata);
         const builder = PgEntitySelectQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
@@ -289,15 +488,23 @@ export class PgPersister implements Persister {
         builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
-        const result = await this._query(queryString, queryValues);
-        return this._toFirstEntityOrUndefined<T, ID>(result, metadata);
+        const result = await this._query(connection, queryString, queryValues);
+        const resultEntity = this._toFirstEntityOrUndefined<T, ID>(result, metadata);
+        if (resultEntity) {
+            await EntityCallbackUtils.runPostLoadCallbacks(
+                [resultEntity],
+                callbacks
+            );
+        }
+        return resultEntity;
     }
 
     /**
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async insert<T extends Entity, ID extends EntityIdTypes> (
+    private async _insert<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata : EntityMetadata,
         entities : T | readonly T[],
     ): Promise<T> {
@@ -313,7 +520,12 @@ export class PgPersister implements Persister {
             throw new TypeError(`Insert can only insert entities of the same time. There were some entities with different metadata than provided.`);
         }
 
-        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+        const { tableName, fields, temporalProperties, idPropertyName, callbacks } = metadata;
+
+        await EntityCallbackUtils.runPrePersistCallbacks(
+            entities,
+            callbacks
+        );
 
         LOG.debug(`insert: table= `, tableName);
 
@@ -331,20 +543,35 @@ export class PgPersister implements Persister {
         const [ queryString, values ] = builder.build();
 
         LOG.debug(`insert: query = `, queryString, values);
-        const result = await this._query(queryString, values);
+        const result = await this._query(connection, queryString, values);
         LOG.debug(`insert: result = `, result);
-        return this._toFirstEntityOrFail<T, ID>(result, metadata);
+        const resultEntity = this._toFirstEntityOrFail<T, ID>(result, metadata);
+
+        await EntityCallbackUtils.runPostLoadCallbacks(
+            [resultEntity],
+            callbacks
+        );
+
+        // FIXME: Only single item is returned even if multiple are added {@see https://github.com/heusalagroup/fi.hg.core/issues/72}
+        await EntityCallbackUtils.runPostPersistCallbacks(
+            [resultEntity],
+            callbacks
+        );
+
+        return resultEntity;
+
     }
 
     /**
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async update<T extends Entity, ID extends EntityIdTypes> (
+    private async _update<T extends Entity, ID extends EntityIdTypes> (
+        connection : PoolClient,
         metadata: EntityMetadata,
         entity: T,
     ): Promise<T> {
-        const { tableName, fields, temporalProperties, idPropertyName } = metadata;
+        const { tableName, fields, temporalProperties, idPropertyName, callbacks } = metadata;
 
         const idField = find(fields, item => item.propertyName === idPropertyName);
         if (!idField) throw new TypeError(`Could not find id field using property "${idPropertyName}"`);
@@ -360,8 +587,13 @@ export class PgPersister implements Persister {
         );
 
         if (updateFields.length === 0) {
+
+            // FIXME: We probably should call PreUpdate in case that the object
+            //  in the database has changed by someone else?
+
             LOG.debug(`Entity did not any updatable properties changed. Saved nothing.`);
-            const item : T | undefined = await this.findBy(
+            const item : T | undefined = await this._findBy(
+                connection,
                 metadata,
                 Where.propertyEquals(idPropertyName, entityId),
                 Sort.by(idPropertyName)
@@ -369,8 +601,18 @@ export class PgPersister implements Persister {
             if (!item) {
                 throw new TypeError(`Entity was not stored in this persister for ID: ${entityId}`);
             }
+
+            await EntityCallbackUtils.runPostUpdateCallbacks(
+                [item],
+                callbacks
+            );
             return item;
         }
+
+        await EntityCallbackUtils.runPreUpdateCallbacks(
+            [entity],
+            callbacks
+        );
 
         const builder = PgEntityUpdateQueryBuilder.create();
         builder.setTablePrefix(this._tablePrefix);
@@ -390,28 +632,41 @@ export class PgPersister implements Persister {
         // builder.setEntities(metadata, entities);
         const [ queryString, queryValues ] = builder.build();
 
-        const result = await this._query(queryString, queryValues);
-        return this._toFirstEntityOrFail<T, ID>(result, metadata);
+        const result = await this._query(connection, queryString, queryValues);
+        const loadedEntity = this._toFirstEntityOrFail<T, ID>(result, metadata);
+
+        await EntityCallbackUtils.runPostLoadCallbacks(
+            [loadedEntity],
+            callbacks
+        );
+
+        await EntityCallbackUtils.runPostUpdateCallbacks(
+            [loadedEntity],
+            callbacks
+        );
+        return loadedEntity;
     }
+
+
 
     /**
      * Performs the actual SQL query.
      *
+     * @param connection
      * @param query The query as a string with parameter placeholders
      * @param values The values for parameter placeholders
      * @private
      */
     private async _query (
+        connection : PoolClient,
         query: string,
         values: readonly any[]
     ) : Promise<QueryResult> {
         query = PgQueryUtils.parametizeQuery(query);
         LOG.debug(`Query "${query}" with values: `, values);
-        const pool = this._pool;
-        if (!pool) throw new TypeError(`The persister has been destroyed`);
         try {
             // FIXME: The upstream library wants writable array. This might be error.
-            return await pool.query(query, values as any[]);
+            return await connection.query(query, values as any[]);
         } catch (err) {
             LOG.debug(`Query failed: `, query, values);
             throw TypeError(`Query failed: "${query}": ${err}`);
@@ -498,45 +753,6 @@ export class PgPersister implements Persister {
         const entity = EntityUtils.toEntity<T, ID>(row, metadata, this._metadataManager);
         this._entityManager.saveLastEntityState(entity);
         return entity;
-    }
-
-    /**
-     *
-     * @param propertyName
-     * @param fields
-     * @private
-     */
-    private _getColumnName (propertyName: string, fields: readonly EntityField[]): string {
-        return find(fields,(x) => x.propertyName === propertyName)?.columnName || "";
-    }
-
-    /**
-     *
-     * @param metadata
-     * @private
-     */
-    private _getIdColumnName (metadata: EntityMetadata) {
-        return this._getColumnName(metadata.idPropertyName, metadata.fields);
-    }
-
-    /**
-     *
-     * @param entity
-     * @param metadata
-     * @private
-     */
-    private _getId (entity: KeyValuePairs, metadata: EntityMetadata) {
-        return entity[metadata.idPropertyName];
-    }
-
-    /**
-     *
-     * @param field
-     * @param metadata
-     * @private
-     */
-    private _isIdField (field: EntityField, metadata: EntityMetadata) {
-        return field.propertyName === metadata.idPropertyName;
     }
 
 }
