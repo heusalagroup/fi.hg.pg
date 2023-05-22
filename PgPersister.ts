@@ -29,7 +29,7 @@ import { PgAndChainBuilder } from "../core/data/query/pg/formulas/PgAndChainBuil
 import { PgEntityInsertQueryBuilder } from "../core/data/query/pg/insert/PgEntityInsertQueryBuilder";
 import { PersisterType } from "../core/data/persisters/types/PersisterType";
 import { TableFieldInfoCallback, TableFieldInfoResponse } from "../core/data/query/sql/select/EntitySelectQueryBuilder";
-import { parseIsoDateString } from "../core/types/Date";
+import { parseIsoDateStringWithMilliseconds } from "../core/types/Date";
 import { PersisterEntityManagerImpl } from "../core/data/persisters/types/PersisterEntityManagerImpl";
 import { PersisterEntityManager } from "../core/data/persisters/types/PersisterEntityManager";
 import { EntityCallbackUtils } from "../core/data/utils/EntityCallbackUtils";
@@ -44,7 +44,7 @@ types.setTypeParser(PgOid.RECORD as number, PgOidParserUtils.parseRecord);
 // Override timestamp conversion to force timestamp to be inserted in UTC
 types.setTypeParser(1114, (str) => {
     const utcStr = `${str}Z`;
-    return parseIsoDateString( new Date(utcStr) , true);
+    return parseIsoDateStringWithMilliseconds( new Date(utcStr) , true);
 });
 
 /**
