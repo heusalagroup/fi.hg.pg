@@ -6,7 +6,7 @@
 DROP TABLE IF EXISTS prefix_foos;
 CREATE TABLE prefix_foos (
   foo_id BIGSERIAL PRIMARY KEY,
-  foo_date TIMESTAMP NOT NULL,
+  foo_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   foo_name varchar(255) NOT NULL default '',
   non_updatable VARCHAR(255) NOT NULL default ''
 );
@@ -18,7 +18,8 @@ CREATE TABLE prefix_foos (
 DROP TABLE IF EXISTS prefix_bars;
 CREATE TABLE prefix_bars (
   bar_id BIGSERIAL PRIMARY KEY,
-  bar_date TIMESTAMP NOT NULL,
+  bar_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  bar_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   bar_name varchar(255) NOT NULL default ''
 );
 
