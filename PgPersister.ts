@@ -5,7 +5,7 @@ import { first } from "../core/functions/first";
 import { map } from "../core/functions/map";
 import { find } from "../core/functions/find";
 import { has } from "../core/functions/has";
-import { Pool, PoolClient, QueryResult, types } from "pg";
+import { Pool, PoolClient, PoolConfig, QueryResult, types } from "pg";
 import { EntityMetadata } from "../core/data/types/EntityMetadata";
 import { Persister } from "../core/data/types/Persister";
 import { Entity, EntityIdTypes } from "../core/data/Entity";
@@ -34,6 +34,7 @@ import { PersisterEntityManagerImpl } from "../core/data/persisters/types/Persis
 import { PersisterEntityManager } from "../core/data/persisters/types/PersisterEntityManager";
 import { EntityCallbackUtils } from "../core/data/utils/EntityCallbackUtils";
 import { EntityCallbackType } from "../core/data/types/EntityCallbackType";
+import { startsWith } from "../core/functions/startsWith";
 
 const LOG = LogService.createLogger('PgPersister');
 
@@ -67,10 +68,10 @@ export class PgPersister implements Persister {
     private readonly _fetchTableInfo : TableFieldInfoCallback;
 
     public constructor (
-        host: string,
-        user: string,
-        password: string,
-        database: string,
+        host: string | undefined = undefined,
+        user: string | undefined = undefined,
+        password: string | undefined = undefined,
+        database: string | undefined = undefined,
         ssl : boolean | undefined = undefined,
         tablePrefix: string = '',
         applicationName: string | undefined = undefined,
@@ -83,25 +84,26 @@ export class PgPersister implements Persister {
         idleInTransactionSessionTimeout: number | undefined = undefined,
         port : number | undefined = undefined,
     ) {
+        const config : PoolConfig = host && startsWith(host, 'postgresql://') ? ({
+            connectionString: host
+        }) : ({
+            ...(host !== undefined ? { host } : {}),
+            ...(user !== undefined ? { user } : {}),
+            ...(password !== undefined ? { password } : {}),
+            ...(database !== undefined ? { database } : {}),
+            ...(port !== undefined ? { port } : {}),
+            ...(ssl !== undefined ? {ssl} : {}),
+            ...(applicationName !== undefined ? {application_name: applicationName} : {}),
+            ...(queryTimeout !== undefined ? {query_timeout: queryTimeout} : {}),
+            ...(statementTimeout !== undefined ? {statement_timeout: statementTimeout} : {}),
+            ...(connectionTimeoutMillis !== undefined ? {connectionTimeoutMillis} : {}),
+            ...(idleInTransactionSessionTimeout !== undefined ? {idle_in_transaction_session_timeout: idleInTransactionSessionTimeout} : {}),
+            ...(idleTimeoutMillis !== undefined ? {idleTimeoutMillis} : {}),
+            ...(maxClients !== undefined ? {max: maxClients} : {}),
+            ...(allowExitOnIdle !== undefined ? {allowExitOnIdle} : {}),
+        });
         this._tablePrefix = tablePrefix;
-        this._pool = new Pool(
-            {
-                host,
-                user,
-                password,
-                database,
-                ...(port !== undefined ? { port } : {}),
-                ...(ssl !== undefined ? {ssl} : {}),
-                ...(applicationName !== undefined ? {application_name: applicationName} : {}),
-                ...(queryTimeout !== undefined ? {query_timeout: queryTimeout} : {}),
-                ...(statementTimeout !== undefined ? {statement_timeout: statementTimeout} : {}),
-                ...(connectionTimeoutMillis !== undefined ? {connectionTimeoutMillis} : {}),
-                ...(idleInTransactionSessionTimeout !== undefined ? {idle_in_transaction_session_timeout: idleInTransactionSessionTimeout} : {}),
-                ...(idleTimeoutMillis !== undefined ? {idleTimeoutMillis} : {}),
-                ...(maxClients !== undefined ? {max: maxClients} : {}),
-                ...(allowExitOnIdle !== undefined ? {allowExitOnIdle} : {}),
-            }
-        );
+        this._pool = new Pool( config );
         this._pool.on('error', (err/*, client*/) => {
             LOG.error(`Unexpected error on idle client: `, err);
         })
