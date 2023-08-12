@@ -8,7 +8,7 @@ import { has } from "../core/functions/has";
 import { Pool, PoolClient, PoolConfig, QueryResult, types } from "pg";
 import { EntityMetadata } from "../core/data/types/EntityMetadata";
 import { Persister } from "../core/data/types/Persister";
-import { Entity, EntityIdTypes } from "../core/data/Entity";
+import { Entity } from "../core/data/Entity";
 import { EntityUtils } from "../core/data/utils/EntityUtils";
 import { KeyValuePairs } from "../core/data/types/KeyValuePairs";
 import { LogService } from "../core/LogService";
@@ -154,7 +154,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async count<T extends Entity, ID extends EntityIdTypes> (
+    public async count (
         metadata : EntityMetadata,
         where    : Where | undefined
     ): Promise<number> {
@@ -167,7 +167,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async existsBy<T extends Entity, ID extends EntityIdTypes> (
+    public async existsBy (
         metadata : EntityMetadata,
         where    : Where
     ): Promise<boolean> {
@@ -180,7 +180,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async deleteAll<T extends Entity, ID extends EntityIdTypes> (
+    public async deleteAll (
         metadata : EntityMetadata,
         where    : Where | undefined,
     ): Promise<void> {
@@ -193,7 +193,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.findAll}
      */
-    public async findAll<T extends Entity, ID extends EntityIdTypes> (
+    public async findAll<T extends Entity> (
         metadata : EntityMetadata,
         where    : Where | undefined,
         sort     : Sort | undefined
@@ -207,7 +207,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async findBy<T extends Entity, ID extends EntityIdTypes> (
+    public async findBy<T extends Entity> (
         metadata : EntityMetadata,
         where    : Where,
         sort     : Sort | undefined
@@ -221,7 +221,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async insert<T extends Entity, ID extends EntityIdTypes> (
+    public async insert<T extends Entity> (
         metadata : EntityMetadata,
         entities : T | readonly T[],
     ): Promise<T> {
@@ -234,7 +234,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    public async update<T extends Entity, ID extends EntityIdTypes> (
+    public async update<T extends Entity> (
         metadata: EntityMetadata,
         entity: T,
     ): Promise<T> {
@@ -296,7 +296,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _count<T extends Entity, ID extends EntityIdTypes> (
+    private async _count (
         connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where | undefined
@@ -334,7 +334,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _existsBy<T extends Entity, ID extends EntityIdTypes> (
+    private async _existsBy (
         connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where
@@ -366,7 +366,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _deleteAll<T extends Entity, ID extends EntityIdTypes> (
+    private async _deleteAll<T extends Entity> (
         connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where | undefined,
@@ -377,7 +377,7 @@ export class PgPersister implements Persister {
         const hasPostRemoveCallbacks = EntityCallbackUtils.hasCallbacks(callbacks, EntityCallbackType.POST_REMOVE);
 
         if ( hasPreRemoveCallbacks || hasPostRemoveCallbacks ) {
-            entities = await this._findAll<T, ID>(connection, metadata, where, undefined);
+            entities = await this._findAll(connection, metadata, where, undefined);
         }
 
         if (hasPreRemoveCallbacks) {
@@ -435,7 +435,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.findAll}
      */
-    private async _findAll<T extends Entity, ID extends EntityIdTypes> (
+    private async _findAll<T extends Entity> (
         connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where | undefined,
@@ -454,7 +454,7 @@ export class PgPersister implements Persister {
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._fetchTableInfo);
-        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
+        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(connection, queryString, queryValues);
@@ -470,7 +470,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _findBy<T extends Entity, ID extends EntityIdTypes> (
+    private async _findBy<T extends Entity> (
         connection : PoolClient,
         metadata : EntityMetadata,
         where    : Where,
@@ -487,11 +487,11 @@ export class PgPersister implements Persister {
         builder.setGroupByColumn(mainIdColumnName);
         builder.includeEntityFields(tableName, fields, temporalProperties);
         builder.setOneToManyRelations(oneToManyRelations, this._fetchTableInfo);
-        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields, temporalProperties);
+        builder.setManyToOneRelations(manyToOneRelations, this._fetchTableInfo, fields);
         if (where !== undefined) builder.setWhereFromQueryBuilder( builder.buildAnd(where, tableName, fields, temporalProperties) );
         const [queryString, queryValues] = builder.build();
         const result = await this._query(connection, queryString, queryValues);
-        const resultEntity = this._toFirstEntityOrUndefined<T, ID>(result, metadata);
+        const resultEntity = this._toFirstEntityOrUndefined<T>(result, metadata);
         if (resultEntity) {
             await EntityCallbackUtils.runPostLoadCallbacks(
                 [resultEntity],
@@ -505,7 +505,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _insert<T extends Entity, ID extends EntityIdTypes> (
+    private async _insert<T extends Entity> (
         connection : PoolClient,
         metadata : EntityMetadata,
         entities : T | readonly T[],
@@ -547,7 +547,7 @@ export class PgPersister implements Persister {
         LOG.debug(`insert: query = `, queryString, values);
         const result = await this._query(connection, queryString, values);
         LOG.debug(`insert: result = `, result);
-        const resultEntity = this._toFirstEntityOrFail<T, ID>(result, metadata);
+        const resultEntity = this._toFirstEntityOrFail<T>(result, metadata);
 
         await EntityCallbackUtils.runPostLoadCallbacks(
             [resultEntity],
@@ -568,7 +568,7 @@ export class PgPersister implements Persister {
      * @inheritDoc
      * @see {@link Persister.destroy}
      */
-    private async _update<T extends Entity, ID extends EntityIdTypes> (
+    private async _update<T extends Entity> (
         connection : PoolClient,
         metadata: EntityMetadata,
         entity: T,
@@ -635,7 +635,7 @@ export class PgPersister implements Persister {
         const [ queryString, queryValues ] = builder.build();
 
         const result = await this._query(connection, queryString, queryValues);
-        const loadedEntity = this._toFirstEntityOrFail<T, ID>(result, metadata);
+        const loadedEntity = this._toFirstEntityOrFail<T>(result, metadata);
 
         await EntityCallbackUtils.runPostLoadCallbacks(
             [loadedEntity],
@@ -682,7 +682,7 @@ export class PgPersister implements Persister {
      * @param metadata
      * @private
      */
-    private _toEntityArray<T extends Entity, ID extends EntityIdTypes> (
+    private _toEntityArray<T extends Entity> (
         result: QueryResult,
         metadata: EntityMetadata
     ) : T[] {
@@ -699,7 +699,7 @@ export class PgPersister implements Persister {
             result.rows,
             (row: any) => {
                 if (!row) throw new TypeError(`Unexpected illegal row: ${row}`);
-                return this._toEntity<T, ID>(row, metadata);
+                return this._toEntity<T>(row, metadata);
             }
         );
     }
@@ -712,7 +712,7 @@ export class PgPersister implements Persister {
      * @param metadata
      * @private
      */
-    private _toFirstEntityOrUndefined<T extends Entity, ID extends EntityIdTypes> (
+    private _toFirstEntityOrUndefined<T extends Entity> (
         result: QueryResult,
         metadata: EntityMetadata
     ) : T | undefined {
@@ -728,7 +728,7 @@ export class PgPersister implements Persister {
         const row = first(rows);
         if (!row) return undefined;
         LOG.debug(`_toFirstEntityOrUndefined: row = `, row);
-        return this._toEntity<T, ID>(row, metadata);
+        return this._toEntity<T>(row, metadata);
     }
 
     /**
@@ -738,21 +738,21 @@ export class PgPersister implements Persister {
      * @param metadata
      * @private
      */
-    private _toFirstEntityOrFail<T extends Entity, ID extends EntityIdTypes> (
+    private _toFirstEntityOrFail<T extends Entity> (
         result: QueryResult,
         metadata: EntityMetadata
     ) : T {
-        const item = this._toFirstEntityOrUndefined<T, ID>(result, metadata);
+        const item = this._toFirstEntityOrUndefined<T>(result, metadata);
         if (item === undefined) throw new TypeError(`Result was not found`);
         LOG.debug(`_toFirstEntityOrFail: item = `, item);
         return item;
     }
 
-    private _toEntity<T extends Entity, ID extends EntityIdTypes> (
+    private _toEntity<T extends Entity> (
         row      : KeyValuePairs,
         metadata : EntityMetadata
     ) : T {
-        const entity = EntityUtils.toEntity<T, ID>(row, metadata, this._metadataManager);
+        const entity = EntityUtils.toEntity<T>(row, metadata, this._metadataManager);
         this._entityManager.saveLastEntityState(entity);
         return entity;
     }
